@@ -21,29 +21,31 @@ func AddAddress(addresses []string) func(string) {
 func Dial(address string, timeout time.Duration, w *sync.WaitGroup, addAddress func(string)) {
 	defer w.Done()
 	conn, err := net.DialTimeout("tcp", address, timeout)
-	// проверка
 	fmt.Println(err)
 	if oerr, ok := err.(*net.OpError); ok {
 		mu.Lock()
+		fmt.Printf("%#v\n", err)
+		fmt.Println(err)
 		if soerr, ok := oerr.Err.(*os.SyscallError); ok {
 			if soerr.Err == syscall.ECONNREFUSED {
 				fmt.Println("connection refused")
 			} else if soerr.Err == syscall.EMFILE {
-				fmt.Println("open many files")
+				fmt.Println("too many open files")
 			}
+		} else if oerr.Timeout() {
+			fmt.Printf("i/o timeout")
 		}
 		mu.Unlock()
 		return
 	} else if err != nil {
 		mu.Lock()
-		fmt.Printf(" %#v %s\n", err.(*net.OpError), err)
+		fmt.Printf(" %#v %s\n", err, err)
 		mu.Unlock()
 		return
 	}
 	defer conn.Close()
 	addAddress(address)
 }
-
 
 func main() {
 	ip := "127.0.0.1"

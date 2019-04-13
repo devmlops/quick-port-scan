@@ -2,17 +2,25 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"net"
+	"os"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 )
 
-type OpenAddresses struct {
+func NewQuickPortScan() *QuickPortScan {
+	return &QuickPortScan{FoundAddresses: FoundAddresses{addresses: make(map[string]string)}}
+}
+
+type FoundAddresses struct {
 	amu       sync.Mutex
 	addresses map[string]string
 }
 
-func (a *OpenAddresses) addAddress(address, status string) {
+func (a *FoundAddresses) addAddress(address, status string) {
 	a.amu.Lock()
 	a.addresses[address] = status
 	a.amu.Unlock()
@@ -20,10 +28,11 @@ func (a *OpenAddresses) addAddress(address, status string) {
 
 type QuickPortScan struct {
 	ips     []string
-	ports   []string
+	ports   []int
 	timeout time.Duration
+	threads int
 
-	OpenAddresses
+	FoundAddresses
 	qmu                sync.Mutex
 	isTooManyOpenFiles bool
 }
@@ -35,7 +44,7 @@ func (q *QuickPortScan) addIPs(ips ...string) {
 }
 
 func (q *QuickPortScan) addPort(port int) {
-	p := strconv.Itoa(port)
+	p := port
 	q.ports = append(q.ports, p)
 }
 
@@ -51,56 +60,61 @@ func (q *QuickPortScan) setFlagTooManyOpenFiles(s bool) {
 	q.qmu.Unlock()
 }
 
-//func (q *QuickPortScan) ScanPorts(address []string) error {
-//	for port := 1; port <= 8000; port++ {
-//		address := net.JoinHostPort(ip, strconv.Itoa(port))
-//		go q.isOpenedPort(address, timeout, &waitGroup, addAddress)
-//	}
-//}
-//
-//func (q *QuickPortScan) isOpenedPort(host, port string) {
-//	defer w.Done()
-//	conn, err := net.DialTimeout("tcp", address, timeout)
-//	fmt.Println(err)
-//	if oerr, ok := err.(*net.OpError); ok {
-//		q.qmu.Lock()
-//		fmt.Printf("-%#v\n", err)
-//		fmt.Println(err)
-//		if soerr, ok := oerr.Err.(*os.SyscallError); ok {
-//			if soerr.Err == syscall.ECONNREFUSED {
-//				fmt.Println("connection refused")
-//			} else if soerr.Err == syscall.EMFILE {
-//				panic("Too many open files. ")
-//			}
-//		} else if oerr.Timeout() {
-//			fmt.Printf("i/o timeout")
-//		}
-//		q.qmu.Unlock()
-//		return
-//	} else if err != nil {
-//		q.qmu.Lock()
-//		fmt.Printf(" %#v %s\n", err, err)
-//		q.qmu.Unlock()
-//		return
-//	}
-//	defer conn.Close()
-//	q.addAddress(address)
-//}
+func (q *QuickPortScan) StartScan() error {
+	q.setFlagTooManyOpenFiles(false)
+	threads := make(chan bool, q.threads)
+	for _, ip := range q.ips {
+		for _, port := range q.ports {
+			fmt.Println(port)
+			threads <- true
+			address := net.JoinHostPort(ip, strconv.Itoa(port))
+			go func(address string) {
+				q.scanAddress(address)
+				fmt.Println(address)
+				<-threads
+			}(address)
+			fmt.Println(address)
+		}
+	}
+	if q.isTooManyOpenFiles {
+		return fmt.Errorf("Too many open files")
+	}
+	return nil
+}
+
+func (q *QuickPortScan) scanAddress(address string) {
+	var status string
+	conn, err := net.DialTimeout("tcp", address, q.timeout)
+	if oerr, ok := err.(*net.OpError); ok {
+		if soerr, ok := oerr.Err.(*os.SyscallError); ok {
+			if soerr.Err == syscall.ECONNREFUSED {
+				fmt.Println("connection refused")
+				return
+			} else if soerr.Err == syscall.EMFILE {
+				q.setFlagTooManyOpenFiles(true)
+				return
+			}
+		} else if oerr.Timeout() {
+			status = "i/o timeout"
+		}
+	} else if err != nil {
+		fmt.Printf(" %#v %s\n", err, err)
+		return
+	}
+	defer conn.Close()
+	status = "open"
+	q.FoundAddresses.addAddress(address, status)
+}
 
 func main() {
-	var q QuickPortScan
+	q := NewQuickPortScan()
 	ips := []string{"127.0.0.1"}
 	q.addIPs(ips...)
-	q.addPortsRange(1, 10000)
+	q.addPortsRange(1, 65535)
 	q.timeout = 10 * time.Second
-
-	//var waitGroup sync.WaitGroup
-	//waitGroup.Add(portsAmount)
-	//
-	//var addresses []string
-	//addAddress := AddAddress(addresses)
-	//
-	//waitGroup.Wait()
-
-	fmt.Printf("%#v", q)
+	q.threads = 1000
+	if err := q.StartScan(); err != nil {
+		log.Fatalf("Too many open files")
+	}
+	fmt.Printf("%#v", q.FoundAddresses)
 }

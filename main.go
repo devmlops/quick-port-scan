@@ -65,15 +65,12 @@ func (q *QuickPortScan) StartScan() error {
 	threads := make(chan bool, q.threads)
 	for _, ip := range q.ips {
 		for _, port := range q.ports {
-			fmt.Println(port)
 			threads <- true
 			address := net.JoinHostPort(ip, strconv.Itoa(port))
 			go func(address string) {
 				q.scanAddress(address)
-				fmt.Println(address)
 				<-threads
 			}(address)
-			fmt.Println(address)
 		}
 	}
 	if q.isTooManyOpenFiles {
@@ -88,7 +85,6 @@ func (q *QuickPortScan) scanAddress(address string) {
 	if oerr, ok := err.(*net.OpError); ok {
 		if soerr, ok := oerr.Err.(*os.SyscallError); ok {
 			if soerr.Err == syscall.ECONNREFUSED {
-				fmt.Println("connection refused")
 				return
 			} else if soerr.Err == syscall.EMFILE {
 				q.setFlagTooManyOpenFiles(true)

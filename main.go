@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"syscall"
@@ -12,18 +13,40 @@ import (
 )
 
 func NewQuickPortScan() *QuickPortScan {
-	return &QuickPortScan{FoundAddresses: FoundAddresses{addresses: make(map[string]string)}}
+	return &QuickPortScan{FoundAddresses: FoundAddresses{addresses: make(map[string]map[int]string)}}
 }
 
 type FoundAddresses struct {
 	amu       sync.Mutex
-	addresses map[string]string
+	addresses map[string]map[int]string
 }
 
-func (a *FoundAddresses) addAddress(address, status string) {
+func (a *FoundAddresses) addAddress(ip string, port int, status string) {
 	a.amu.Lock()
-	a.addresses[address] = status
+	if _, ok := a.addresses[ip]; ok != true {
+		a.addresses[ip] = map[int]string{}
+	}
+	a.addresses[ip][port] = status
 	a.amu.Unlock()
+}
+
+func (a *FoundAddresses) PrintAddresses() {
+	var rawIPs []string
+	for address := range a.addresses {
+		rawIPs = append(rawIPs, address)
+	}
+	sort.Strings(rawIPs)
+	var sortedAddresses []string
+	for _, ip := range rawIPs{
+		for port := range a.addresses[ip] {
+			address := fmt.Sprintf("%s:%d", ip, port)
+			sortedAddresses = append(sortedAddresses, address)
+		}
+	}
+	for _, addr := range sortedAddresses {
+		fmt.Printf("%s\n", addr)
+	}
+
 }
 
 type QuickPortScan struct {
@@ -63,24 +86,28 @@ func (q *QuickPortScan) setFlagTooManyOpenFiles(s bool) {
 func (q *QuickPortScan) StartScan() error {
 	q.setFlagTooManyOpenFiles(false)
 	threads := make(chan bool, q.threads)
+	var wg sync.WaitGroup
+	wg.Add(len(q.ips) * len(q.ports))
 	for _, ip := range q.ips {
 		for _, port := range q.ports {
 			threads <- true
-			address := net.JoinHostPort(ip, strconv.Itoa(port))
-			go func(address string) {
-				q.scanAddress(address)
+			go func(ip string, port int) {
+				q.scanAddress(ip, port)
 				<-threads
-			}(address)
+				wg.Done()
+			}(ip, port)
 		}
 	}
+	wg.Wait()
 	if q.isTooManyOpenFiles {
 		return fmt.Errorf("Too many open files")
 	}
 	return nil
 }
 
-func (q *QuickPortScan) scanAddress(address string) {
+func (q *QuickPortScan) scanAddress(ip string, port int) {
 	var status string
+	address := net.JoinHostPort(ip, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", address, q.timeout)
 	if oerr, ok := err.(*net.OpError); ok {
 		if soerr, ok := oerr.Err.(*os.SyscallError); ok {
@@ -92,6 +119,7 @@ func (q *QuickPortScan) scanAddress(address string) {
 			}
 		} else if oerr.Timeout() {
 			status = "i/o timeout"
+			return
 		}
 	} else if err != nil {
 		fmt.Printf(" %#v %s\n", err, err)
@@ -99,7 +127,7 @@ func (q *QuickPortScan) scanAddress(address string) {
 	}
 	defer conn.Close()
 	status = "open"
-	q.FoundAddresses.addAddress(address, status)
+	q.FoundAddresses.addAddress(ip, port, status)
 }
 
 func main() {
@@ -112,5 +140,5 @@ func main() {
 	if err := q.StartScan(); err != nil {
 		log.Fatalf("Too many open files")
 	}
-	fmt.Printf("%#v", q.FoundAddresses)
+	q.PrintAddresses()
 }

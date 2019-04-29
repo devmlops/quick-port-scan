@@ -13,7 +13,10 @@ import (
 )
 
 func NewQuickPortScan() *QuickPortScan {
-	return &QuickPortScan{FoundAddresses: FoundAddresses{addresses: make(map[string]map[int]string)}}
+	return &QuickPortScan{
+		FoundAddresses: FoundAddresses{addresses: make(map[string]map[int]string)},
+		pauseTime:      0,
+	}
 }
 
 type FoundAddresses struct {
@@ -37,7 +40,7 @@ func (a *FoundAddresses) PrintAddresses() {
 	}
 	sort.Strings(rawIPs)
 	var sortedAddresses []string
-	for _, ip := range rawIPs{
+	for _, ip := range rawIPs {
 		for port := range a.addresses[ip] {
 			address := fmt.Sprintf("%s:%d", ip, port)
 			sortedAddresses = append(sortedAddresses, address)
@@ -50,10 +53,11 @@ func (a *FoundAddresses) PrintAddresses() {
 }
 
 type QuickPortScan struct {
-	ips     []string
-	ports   []int
-	timeout time.Duration
-	threads int
+	ips       []string
+	ports     []int
+	timeout   time.Duration
+	pauseTime time.Duration
+	threads   int
 
 	FoundAddresses
 	qmu                sync.Mutex
@@ -96,6 +100,7 @@ func (q *QuickPortScan) StartScan() error {
 				<-threads
 				wg.Done()
 			}(ip, port)
+			time.Sleep(q.pauseTime)
 		}
 	}
 	wg.Wait()

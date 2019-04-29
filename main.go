@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"net"
@@ -34,14 +35,17 @@ func (a *FoundAddresses) addAddress(ip string, port int, status string) {
 }
 
 func (a *FoundAddresses) PrintAddresses() {
-	var rawIPs []string
-	for address := range a.addresses {
-		rawIPs = append(rawIPs, address)
+	rawIPs := make([]net.IP, 0, len(a.addresses))
+	for ip := range a.addresses {
+		rawIPs = append(rawIPs, net.ParseIP(ip))
 	}
-	sort.Strings(rawIPs)
+	sort.Slice(rawIPs, func(i, j int) bool {
+		return bytes.Compare(rawIPs[i], rawIPs[j]) < 0
+	})
 	var sortedAddresses []string
 	for _, ip := range rawIPs {
-		for port := range a.addresses[ip] {
+		strIP := fmt.Sprintf("%s", ip)
+		for port := range a.addresses[strIP] {
 			address := fmt.Sprintf("%s:%d", ip, port)
 			sortedAddresses = append(sortedAddresses, address)
 		}
@@ -92,8 +96,8 @@ func (q *QuickPortScan) StartScan() error {
 	threads := make(chan bool, q.threads)
 	var wg sync.WaitGroup
 	wg.Add(len(q.ips) * len(q.ports))
-	for _, ip := range q.ips {
-		for _, port := range q.ports {
+	for _, port := range q.ports {
+		for _, ip := range q.ips {
 			threads <- true
 			go func(ip string, port int) {
 				q.scanAddress(ip, port)
